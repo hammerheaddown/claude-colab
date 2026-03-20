@@ -118,3 +118,101 @@ class TestHealthCheck:
     def test_skip_check_on_fresh(self, mock_client):
         _ensure_healthy(mock_client, last_check=time.time())
         mock_client.health.assert_not_called()
+
+    def test_version_mismatch_warning(self, mock_client):
+        mock_client.health.return_value = {"status": "ok", "version": "99.0.0"}
+        warning = _ensure_healthy(mock_client, last_check=0)
+        assert "mismatch" in warning
+
+    def test_health_error_returns_string(self, mock_client):
+        from claude_colab.client import ColabError
+        mock_client.health.side_effect = ColabError("connection refused")
+        warning = _ensure_healthy(mock_client, last_check=0)
+        assert "connection refused" in warning
+
+
+class TestCreateServer:
+    def test_creates_server(self):
+        from claude_colab.mcp_server import create_server
+        server = create_server()
+        assert server is not None
+
+
+class TestPrepareCallNotConnected:
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_python_not_connected(self, mock_get):
+        mock_get.return_value = (None, None)
+        result = colab_python("print(1)")
+        assert "Not connected" in result
+
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_upload_not_connected(self, mock_get):
+        mock_get.return_value = (None, None)
+        result = colab_upload("/x", "/y")
+        assert "Not connected" in result
+
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_download_not_connected(self, mock_get):
+        mock_get.return_value = (None, None)
+        result = colab_download("/x", "/y")
+        assert "Not connected" in result
+
+
+class TestToolErrors:
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_python_error(self, mock_get, mock_client, mock_config):
+        from claude_colab.client import ColabError
+        mock_client.python.side_effect = ColabError("boom")
+        mock_get.return_value = (mock_client, mock_config)
+        result = colab_python("bad code")
+        assert "boom" in result
+
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_upload_error(self, mock_get, mock_client, mock_config):
+        from claude_colab.client import ColabError
+        mock_client.upload.side_effect = ColabError("too big")
+        mock_get.return_value = (mock_client, mock_config)
+        result = colab_upload("/x", "/y")
+        assert "too big" in result
+
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_download_error(self, mock_get, mock_client, mock_config):
+        from claude_colab.client import ColabError
+        mock_client.download.side_effect = ColabError("not found")
+        mock_get.return_value = (mock_client, mock_config)
+        result = colab_download("/x", "/y")
+        assert "not found" in result
+
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_status_error(self, mock_get, mock_client, mock_config):
+        from claude_colab.client import ColabError
+        mock_client.health.side_effect = ColabError("dead")
+        mock_get.return_value = (mock_client, mock_config)
+        result = colab_status()
+        assert "dead" in result
+
+
+class TestColabExecError:
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_returns_error_string(self, mock_get, mock_client, mock_config):
+        from claude_colab.client import ColabError
+        mock_client.exec.side_effect = ColabError("timeout")
+        mock_get.return_value = (mock_client, mock_config)
+        result = colab_exec("sleep 999")
+        assert "timeout" in result
+
+
+class TestWarningAttachment:
+    @patch("claude_colab.mcp_server._get_client_and_config")
+    def test_old_session_adds_warning(self, mock_get, mock_client):
+        old_config = {
+            "url": "https://test.trycloudflare.com",
+            "token": "tok",
+            "encryption_key": "key",
+            "connected_at": (datetime.now(timezone.utc) - timedelta(hours=11)).isoformat(),
+        }
+        mock_client.exec.return_value = {"stdout": "ok", "stderr": "", "exit_code": 0, "duration": 0.1}
+        mock_get.return_value = (mock_client, old_config)
+        result = colab_exec("echo ok")
+        assert "_warnings" in result
+        assert any("expire soon" in w for w in result["_warnings"])

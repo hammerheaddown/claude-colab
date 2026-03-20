@@ -140,3 +140,53 @@ class TestTimeout:
         )
         with pytest.raises(ColabError, match="timed out"):
             client.exec("sleep 999")
+
+
+class TestStringKey:
+    @respx.mock
+    def test_accepts_string_encryption_key(self, key):
+        """ColabClient should accept encryption_key as str (from config file)."""
+        client = ColabClient(
+            url="https://test.trycloudflare.com",
+            token="tok",
+            encryption_key=key.decode("utf-8"),  # str, not bytes
+        )
+        response_data = {"stdout": "ok\n", "stderr": "", "exit_code": 0, "duration": 0.1}
+        respx.post("https://test.trycloudflare.com/exec").mock(
+            return_value=httpx.Response(200, content=encrypt(key, response_data))
+        )
+        result = client.exec("echo ok")
+        assert result["stdout"] == "ok\n"
+
+
+class TestClose:
+    def test_close_doesnt_error(self, client):
+        client.close()
+
+
+class TestUploadErrors:
+    def test_file_not_found(self, client):
+        with pytest.raises(ColabError, match="not found"):
+            client.upload("/nonexistent/file.py", "/content/file.py")
+
+    def test_file_too_large(self, client, tmp_path):
+        big_file = tmp_path / "big.bin"
+        big_file.write_bytes(b"x" * (50 * 1024 * 1024 + 1))
+        with pytest.raises(ColabError, match="50MB"):
+            client.upload(str(big_file), "/content/big.bin")
+
+
+class TestDownloadCreatesDirs:
+    @respx.mock
+    def test_creates_parent_dirs(self, client, key, tmp_path):
+        response_data = {
+            "content_b64": base64.b64encode(b"data").decode(),
+            "path": "/content/x",
+            "size_bytes": 4,
+        }
+        respx.post("https://test.trycloudflare.com/download").mock(
+            return_value=httpx.Response(200, content=encrypt(key, response_data))
+        )
+        nested = tmp_path / "a" / "b" / "file.txt"
+        client.download("/content/x", str(nested))
+        assert nested.read_bytes() == b"data"
