@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import sys
 import uuid
 from pathlib import Path
@@ -180,3 +181,10 @@ def download(remote_path: str, local_path: str):
     except ColabError as e:
         click.echo(f"Error: {e}", err=True)
         raise SystemExit(1)
+
+
+@main.command("mcp-serve")
+def mcp_serve():
+    """Start the MCP server (stdio transport)."""
+    from claude_colab.mcp_server import run_server
+    asyncio.run(run_server())
