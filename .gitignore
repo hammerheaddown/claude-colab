@@ -10,3 +10,5 @@ build/
 htmlcov/
 venv/
 .venv/
+.DS_Store
+*.mp4
